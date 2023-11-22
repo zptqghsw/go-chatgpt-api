@@ -11,32 +11,21 @@ import (
 	"regexp"
 	"strings"
 
+	http "github.com/bogdanfinn/fhttp"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/linweiyuan/funcaptcha"
+
 	"github.com/linweiyuan/go-chatgpt-api/api"
 	"github.com/linweiyuan/go-chatgpt-api/api/chatgpt"
 	"github.com/linweiyuan/go-logger/logger"
-
-	http "github.com/bogdanfinn/fhttp"
 )
 
-//goland:noinspection SpellCheckingInspection
 var (
-	arkoseTokenUrl string
-	bx             string
-	reg            *regexp.Regexp
+	reg *regexp.Regexp
 )
 
-//goland:noinspection SpellCheckingInspection
 func init() {
-	arkoseTokenUrl = os.Getenv("ARKOSE_TOKEN_URL")
-	bx = os.Getenv("BX")
-	var err error
-	reg, err = regexp.Compile("[^a-zA-Z0-9]+")
-	if err != nil {
-		panic(fmt.Sprintf("Error compiling regex: %v", err))
-	}
+	reg, _ = regexp.Compile("[^a-zA-Z0-9]+")
 }
 
 func CreateChatCompletions(c *gin.Context) {
@@ -67,9 +56,6 @@ func CreateChatCompletions(c *gin.Context) {
 
 	response, done := sendConversationRequest(c, translatedRequest, token)
 	if done {
-		c.JSON(500, gin.H{
-			"error": "error sending request",
-		})
 		return
 	}
 
@@ -106,9 +92,6 @@ func CreateChatCompletions(c *gin.Context) {
 		response, done = sendConversationRequest(c, translatedRequest, token)
 
 		if done {
-			c.JSON(500, gin.H{
-				"error": "error sending request",
-			})
 			return
 		}
 
@@ -143,7 +126,6 @@ func generateId() string {
 	return "chatcmpl-" + id
 }
 
-//goland:noinspection SpellCheckingInspection
 func convertAPIRequest(apiRequest APIRequest) (chatgpt.CreateConversationRequest, string) {
 	chatgptRequest := NewChatGPTRequest()
 
@@ -154,7 +136,7 @@ func convertAPIRequest(apiRequest APIRequest) (chatgpt.CreateConversationRequest
 	}
 
 	if strings.HasPrefix(apiRequest.Model, "gpt-4") {
-		arkoseToken, err := GetOpenAIToken()
+		arkoseToken, err := api.GetArkoseToken()
 		if err == nil {
 			chatgptRequest.ArkoseToken = arkoseToken
 		} else {
@@ -179,35 +161,6 @@ func convertAPIRequest(apiRequest APIRequest) (chatgpt.CreateConversationRequest
 	return chatgptRequest, model
 }
 
-func GetOpenAIToken() (string, error) {
-	var arkoseToken string
-	var err error
-	if arkoseTokenUrl == "" {
-		if bx == "" {
-			arkoseToken, err = funcaptcha.GetOpenAIToken()
-		} else {
-			arkoseToken, err = funcaptcha.GetOpenAITokenWithBx(bx)
-		}
-		if err != nil {
-			return "", err
-		}
-	} else {
-		req, _ := http.NewRequest(http.MethodGet, arkoseTokenUrl, nil)
-		resp, err := api.Client.Do(req)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			return "", err
-		}
-		responseMap := make(map[string]interface{})
-		err = json.NewDecoder(resp.Body).Decode(&responseMap)
-		if err != nil {
-			return "", err
-		}
-		arkoseToken = responseMap["token"].(string)
-	}
-	return arkoseToken, err
-}
-
-//goland:noinspection SpellCheckingInspection
 func NewChatGPTRequest() chatgpt.CreateConversationRequest {
 	enableHistory := os.Getenv("ENABLE_HISTORY") == ""
 	return chatgpt.CreateConversationRequest{
@@ -218,16 +171,14 @@ func NewChatGPTRequest() chatgpt.CreateConversationRequest {
 	}
 }
 
-//goland:noinspection GoUnhandledErrorResult
 func sendConversationRequest(c *gin.Context, request chatgpt.CreateConversationRequest, accessToken string) (*http.Response, bool) {
 	jsonBytes, _ := json.Marshal(request)
 	req, _ := http.NewRequest(http.MethodPost, api.ChatGPTApiUrlPrefix+"/backend-api/conversation", bytes.NewBuffer(jsonBytes))
 	req.Header.Set("User-Agent", api.UserAgent)
 	req.Header.Set(api.AuthorizationHeader, accessToken)
 	req.Header.Set("Accept", "text/event-stream")
-	if chatgpt.PUID != "" {
-		//goland:noinspection SpellCheckingInspection
-		req.Header.Set("Cookie", "_puid="+chatgpt.PUID)
+	if api.PUID != "" {
+		req.Header.Set("Cookie", "_puid="+api.PUID)
 	}
 	resp, err := api.Client.Do(req)
 	if err != nil {
@@ -249,7 +200,6 @@ func sendConversationRequest(c *gin.Context, request chatgpt.CreateConversationR
 	return resp, false
 }
 
-//goland:noinspection SpellCheckingInspection
 func Handler(c *gin.Context, response *http.Response, stream bool, id string, model string) (string, *ContinueInfo) {
 	maxTokens := false
 
@@ -299,6 +249,9 @@ func Handler(c *gin.Context, response *http.Response, stream bool, id string, mo
 			if originalResponse.Message.Metadata.MessageType != "next" && originalResponse.Message.Metadata.MessageType != "continue" || originalResponse.Message.EndTurn != nil {
 				continue
 			}
+			if (len(originalResponse.Message.Content.Parts) == 0 || originalResponse.Message.Content.Parts[0] == "") && !isRole {
+				continue
+			}
 			responseString := ConvertToString(&originalResponse, &previousText, isRole, id, model)
 			isRole = false
 			if stream {
@@ -319,6 +272,9 @@ func Handler(c *gin.Context, response *http.Response, stream bool, id string, mo
 
 		} else {
 			if stream {
+				if finishReason == "" {
+					finishReason = "stop"
+				}
 				finalLine := StopChunk(finishReason, id, model)
 				_, err := c.Writer.WriteString("data: " + finalLine.String() + "\n\n")
 				if err != nil {

@@ -1,15 +1,8 @@
 package chatgpt
 
-//goland:noinspection GoSnakeCaseUsage
 import (
 	"github.com/google/uuid"
-
-	tls_client "github.com/bogdanfinn/tls-client"
 )
-
-type UserLogin struct {
-	client tls_client.HttpClient
-}
 
 type CreateConversationRequest struct {
 	Action                     string    `json:"action"`
@@ -22,20 +15,23 @@ type CreateConversationRequest struct {
 	ArkoseToken                string    `json:"arkose_token"`
 	HistoryAndTrainingDisabled bool      `json:"history_and_training_disabled"`
 	AutoContinue               bool      `json:"auto_continue"`
+	Suggestions                []string  `json:"suggestions"`
 }
 
 func (c *CreateConversationRequest) AddMessage(role string, content string) {
 	c.Messages = append(c.Messages, Message{
-		ID:      uuid.New().String(),
-		Author:  Author{Role: role},
-		Content: Content{ContentType: "text", Parts: []string{content}},
+		ID:       uuid.New().String(),
+		Author:   Author{Role: role},
+		Content:  Content{ContentType: "text", Parts: []interface{}{content}},
+		Metadata: map[string]string{},
 	})
 }
 
 type Message struct {
-	Author  Author  `json:"author"`
-	Content Content `json:"content"`
-	ID      string  `json:"id"`
+	Author   Author      `json:"author"`
+	Content  Content     `json:"content"`
+	ID       string      `json:"id"`
+	Metadata interface{} `json:"metadata"`
 }
 
 type Author struct {
@@ -43,8 +39,8 @@ type Author struct {
 }
 
 type Content struct {
-	ContentType string   `json:"content_type"`
-	Parts       []string `json:"parts"`
+	ContentType string        `json:"content_type"`
+	Parts       []interface{} `json:"parts"`
 }
 
 type CreateConversationResponse struct {
